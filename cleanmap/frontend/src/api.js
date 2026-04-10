@@ -9,8 +9,14 @@ export const getReports  = (status) => api.get("/reports", { params: status ? { 
 export const getStats    = ()        => api.get("/reports/stats");
 export const createReport = (data)  => api.post("/reports", data);
 export const claimReport  = (id, volunteerName) => api.patch(`/reports/${id}/claim`, { volunteerName });
-export const cleanReport  = (id, volunteerName) => api.patch(`/reports/${id}/clean`, { volunteerName });
+export const cleanReport  = (id, volunteerName, afterImageUrl) =>
+  api.patch(`/reports/${id}/clean`, { volunteerName, afterImageUrl });
+export const submitProof  = (id, afterImageUrl) =>
+  api.patch(`/reports/${id}/proof`, { afterImageUrl });
 export const deleteReport = (id)    => api.delete(`/reports/${id}`);
+
+// ── Leaderboard ───────────────────────────────────────────────────────
+export const getLeaderboard = () => api.get("/reports/leaderboard");
 
 // ── Image upload ──────────────────────────────────────────────────────
 export const uploadImage = (file) => {
@@ -18,3 +24,6 @@ export const uploadImage = (file) => {
   form.append("image", file);
   return api.post("/uploads/image", form, { headers: { "Content-Type": "multipart/form-data" } });
 };
+
+// ── SSE stream URL ────────────────────────────────────────────────────
+export const SSE_URL = `${BASE}/reports/stream`;

@@ -23,7 +23,7 @@ const reportRules = [
 
 // ── GET /api/reports ──────────────────────────────────────────────────
 // Returns all reports sorted newest-first.
-// Optional query: ?status=PENDING|IN_PROGRESS|CLEANED
+// Optional query: ?status=PENDING|IN_PROGRESS|CLEANED|PENDING_PROOF
 router.get("/", (req, res) => {
   let reports = store.getAll();
   if (req.query.status) {
@@ -35,6 +35,41 @@ router.get("/", (req, res) => {
 // ── GET /api/reports/stats ────────────────────────────────────────────
 router.get("/stats", (_, res) => {
   res.json({ ok: true, data: store.stats() });
+});
+
+// ── GET /api/reports/leaderboard ──────────────────────────────────────
+router.get("/leaderboard", (_, res) => {
+  res.json({ ok: true, data: store.leaderboard() });
+});
+
+// ── SSE /api/reports/stream ───────────────────────────────────────────
+// Server-Sent Events endpoint for real-time updates.
+router.get("/stream", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+  });
+  res.write("\n");
+
+  // Send initial state
+  const initData = {
+    reports: store.getAll(),
+    stats: store.stats(),
+    leaderboard: store.leaderboard(),
+  };
+  res.write(`event: update\ndata: ${JSON.stringify(initData)}\n\n`);
+
+  // Register SSE client
+  store.addSSEClient(res);
+
+  // Keep-alive every 30s
+  const keepAlive = setInterval(() => {
+    try { res.write(":keepalive\n\n"); } catch {}
+  }, 30000);
+
+  req.on("close", () => clearInterval(keepAlive));
 });
 
 // ── GET /api/reports/:id ──────────────────────────────────────────────
@@ -77,20 +112,49 @@ router.patch("/:id/claim",
 );
 
 // ── PATCH /api/reports/:id/clean ──────────────────────────────────────
-// Body: { volunteerName }
+// Body: { volunteerName, afterImageUrl }
+// If afterImageUrl is provided → status = CLEANED
+// If afterImageUrl is missing → status = PENDING_PROOF
 router.patch("/:id/clean",
   param("id").isString(),
   body("volunteerName").isString().trim().notEmpty().isLength({ max: 80 }),
+  body("afterImageUrl").optional().isString(),
   validate,
   (req, res) => {
     const report = store.getById(req.params.id);
     if (!report) return res.status(404).json({ ok: false, message: "Report not found" });
-    if (report.status !== "IN_PROGRESS") {
+    if (report.status !== "IN_PROGRESS" && report.status !== "PENDING_PROOF") {
       return res.status(409).json({ ok: false, message: `Cannot mark clean — status is '${report.status}'` });
+    }
+
+    const afterImageUrl = req.body.afterImageUrl || null;
+    const newStatus = afterImageUrl ? "CLEANED" : "PENDING_PROOF";
+
+    const updated = store.update(req.params.id, {
+      status: newStatus,
+      claimedBy: req.body.volunteerName,
+      afterImageUrl,
+    });
+    res.json({ ok: true, data: updated });
+  }
+);
+
+// ── PATCH /api/reports/:id/proof ──────────────────────────────────────
+// Upload after photo to move from PENDING_PROOF → CLEANED
+// Body: { afterImageUrl }
+router.patch("/:id/proof",
+  param("id").isString(),
+  body("afterImageUrl").isString().notEmpty(),
+  validate,
+  (req, res) => {
+    const report = store.getById(req.params.id);
+    if (!report) return res.status(404).json({ ok: false, message: "Report not found" });
+    if (report.status !== "PENDING_PROOF") {
+      return res.status(409).json({ ok: false, message: `Report status is '${report.status}', expected PENDING_PROOF` });
     }
     const updated = store.update(req.params.id, {
       status: "CLEANED",
-      claimedBy: req.body.volunteerName,
+      afterImageUrl: req.body.afterImageUrl,
     });
     res.json({ ok: true, data: updated });
   }
